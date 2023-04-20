@@ -7,6 +7,7 @@ class Relation:
         self.size = size
         self.ref = ref
         self.refKeys = refKeys
+        self.metrics = [0]
 
 class VirtualDiskBlock:
     def __init__(self, block_size, data=[]):
@@ -26,10 +27,13 @@ class VirtualDisk:
     def __init__(self):
         self.BLOCK_SIZE = 8
         self.BUCKET_CAP = 200
-        self.array = [None] * self.BUCKET_CAP * 200
+        self.array = [None] * self.BUCKET_CAP ** 2
         self.cursor = 0
+        self.io_count = 0
+        self.bucket_base = 0
 
     def readBlock(self, block_id):
+        self.io_count += 1
         return self.array[block_id]
 
     def writeBlockSeq(self, block):
@@ -37,6 +41,7 @@ class VirtualDisk:
         self.cursor += 1
     
     def writeBlock(self, block, block_id):
+        self.io_count += 1
         self.array[block_id] = block
     
     def getWriteCursor(self):
@@ -46,7 +51,8 @@ class VirtualMemory:
     def __init__(self):
         self.SIZE = 15
         self.array = [None] * self.SIZE * 8
-        self.base_address = 8 # First 8 blocks are reserved for metadata
+        self.base_address = 0
+        self.cache = [None] * 3
 
     def writeToDiskSeq(self, disk, mem_offset = 0):
         block = VirtualDiskBlock(disk.BLOCK_SIZE, self.array[mem_offset:mem_offset+disk.BLOCK_SIZE])
@@ -86,6 +92,7 @@ def generateRelationBC(disk, size=5000):
             ref.append((B, C))
             block.data[blk] = (B, C)
         disk.writeBlockSeq(block)
+    disk.bucket_base += size//disk.BLOCK_SIZE
     return Relation("BC", base_address, size, ref, refKeys)
 
 def generateRelationABFromBKeys(disk, refBKeys, size = 1000):
@@ -99,7 +106,8 @@ def generateRelationABFromBKeys(disk, refBKeys, size = 1000):
             refKeys.add(B)
             ref.append((B, A))
             block.data[blk] = (B, A)
-        disk.writeBlockSeq(block)        
+        disk.writeBlockSeq(block)
+    disk.bucket_base += size//disk.BLOCK_SIZE        
     return Relation("AB", base_address, size, ref, refKeys)
 
 def generateRelationAB(disk, size = 1200):
@@ -113,10 +121,12 @@ def generateRelationAB(disk, size = 1200):
             refKeys.add(B)
             ref.append((B, A))
             block.data[blk] = (B, A)
-        disk.writeBlockSeq(block)        
+        disk.writeBlockSeq(block)
+    disk.bucket_base += size//disk.BLOCK_SIZE     
     return Relation("AB2", base_address, size, ref, refKeys)
 
 def jenkinsHash(key, size):
+    # return key % size
     hash = 0
     key = str(key)
     for c in key:
@@ -133,72 +143,72 @@ def printRelation(disk, R):
     for i in range(R.size//disk.BLOCK_SIZE):
         print(disk.readBlock(R.base_address + i))
 
+def getRIndex(R):
+    return 0 if R.name == "BC" else 1 if R.name == "AB" else 2
+
 def generateBuckets(mem, disk, R, num_buckets):
-    r = 0 if R.name == "BC" else 1
-    mem.array[r] = [0] * num_buckets
+    r = getRIndex(R)
+    disk.cursor = disk.bucket_base + r * num_buckets * disk.BUCKET_CAP
+    mem.cache[r] = [0] * num_buckets
     for i in range(R.size//disk.BLOCK_SIZE):
         mem.readFromDisk(disk, R.base_address + i , mem.base_address)
         bucket_base = mem.base_address + disk.BLOCK_SIZE
         for j in range(mem.base_address, mem.base_address + disk.BLOCK_SIZE):
             key, val = mem.array[j]
             hash = jenkinsHash(key, num_buckets)
-            # print(hash, mem.base_address + hash * disk.BLOCK_SIZE + mem.array[r][hash], len(mem.array))
-            mem.array[bucket_base + hash * disk.BLOCK_SIZE + mem.array[r][hash]%disk.BLOCK_SIZE] = (key, val)
-            mem.array[r][hash] += 1
-            if mem.array[r][hash]%disk.BLOCK_SIZE == 0:
-                # print("Full: ", hash, mem.array[r][hash], disk.cursor + hash * disk.BUCKET_CAP + mem.array[r][hash]//disk.BLOCK_SIZE, mem.base_address + hash * disk.BLOCK_SIZE, mem.array[bucket_base + hash * disk.BLOCK_SIZE:bucket_base + hash * disk.BLOCK_SIZE + disk.BLOCK_SIZE])
-                mem.writeToDiskLoc(disk, disk.cursor + hash * disk.BUCKET_CAP + mem.array[r][hash]//disk.BLOCK_SIZE - 1, bucket_base + hash * disk.BLOCK_SIZE)
+            mem.array[bucket_base + hash * disk.BLOCK_SIZE + mem.cache[r][hash]%disk.BLOCK_SIZE] = (key, val)
+            mem.cache[r][hash] += 1
+            if mem.cache[r][hash]%disk.BLOCK_SIZE == 0:
+                mem.writeToDiskLoc(disk, disk.cursor + hash * disk.BUCKET_CAP + mem.cache[r][hash]//disk.BLOCK_SIZE - 1, bucket_base + hash * disk.BLOCK_SIZE)
                 for i in range(disk.BLOCK_SIZE):
                     mem.array[bucket_base + hash * disk.BLOCK_SIZE + i] = None
+
     for bucket in range(num_buckets):
-        if mem.array[r][bucket]%disk.BLOCK_SIZE > 0:
-            print(bucket, 
-                  mem.array[r][bucket]%disk.BLOCK_SIZE, 
-                  disk.cursor + bucket*disk.BUCKET_CAP + mem.array[r][bucket]//disk.BLOCK_SIZE, 
-                  mem.base_address + bucket * disk.BLOCK_SIZE, 
-                  mem.array[bucket_base + bucket * disk.BLOCK_SIZE:bucket_base + bucket * disk.BLOCK_SIZE + disk.BLOCK_SIZE])
-            mem.writeToDiskLoc(disk, disk.cursor + bucket * disk.BUCKET_CAP + mem.array[r][bucket]//disk.BLOCK_SIZE, bucket_base + bucket * disk.BLOCK_SIZE)
-    
-    disk.cursor += num_buckets * disk.BUCKET_CAP
+        if mem.cache[r][bucket]%disk.BLOCK_SIZE > 0:
+            mem.writeToDiskLoc(disk, disk.cursor + bucket * disk.BUCKET_CAP + mem.cache[r][bucket]//disk.BLOCK_SIZE, bucket_base + bucket * disk.BLOCK_SIZE)
     mem.flush()
-    print("Buckets generated. disk.cursor=", disk.cursor)
 
 
 def hashJoin(mem, disk, R1, R2):
-    num_buckets = mem.SIZE - 2 # 1 block for reading, 1 for metadata
-    generateBuckets(mem, disk, R1, num_buckets)
-    generateBuckets(mem, disk, R2, num_buckets)
+    num_buckets = mem.SIZE - 1 # 1 block for reading
+    r1, r2 = getRIndex(R1), getRIndex(R2)
+    begin_io_count = disk.io_count
+    if(mem.cache[r1] == None):
+        generateBuckets(mem, disk, R1, num_buckets)
+        R1.metrics[0] = disk.io_count - begin_io_count
+    if(mem.cache[r2] == None):
+        r2_begin_io_count = disk.io_count
+        generateBuckets(mem, disk, R2, num_buckets)
+        R2.metrics[0] = disk.io_count - r2_begin_io_count
 
-    disk.cursor -= 2 * num_buckets * disk.BUCKET_CAP
-
+    disk.cursor = disk.bucket_base
+    
     joinResults = []
     for bucket in range(num_buckets):
-        for i in range(math.ceil(mem.array[1][bucket]/disk.BLOCK_SIZE)):
-            print(disk.array[disk.cursor + num_buckets * disk.BUCKET_CAP + bucket * disk.BUCKET_CAP + i])
-            mem.readFromDisk(disk, disk.cursor + num_buckets * disk.BUCKET_CAP + bucket * disk.BUCKET_CAP + i, mem.base_address + (i+1)*disk.BLOCK_SIZE)
-        # print(1, bucket, mem.array[mem.base_address + 8:mem.base_address + 8 + mem.array[1][bucket]])
-
-        for j in range(math.ceil(mem.array[0][bucket]/disk.BLOCK_SIZE)):
+        for i in range(math.ceil(mem.cache[r2][bucket]/disk.BLOCK_SIZE)):
+            mem.readFromDisk(disk, disk.cursor + r2 * num_buckets * disk.BUCKET_CAP + bucket * disk.BUCKET_CAP + i, mem.base_address + (i+1)*disk.BLOCK_SIZE)
+        
+        for j in range(math.ceil(mem.cache[r1][bucket]/disk.BLOCK_SIZE)):
             mem.readFromDisk(disk, disk.cursor + bucket * disk.BUCKET_CAP + j, mem.base_address)
-            # print(0, bucket, mem.array[mem.base_address:mem.base_address + disk.BLOCK_SIZE])
-            for tuple in mem.array[mem.base_address + 8:mem.base_address + 8 + mem.array[1][bucket]]:
-                key1, val1 = tuple
+            for tuple in mem.array[mem.base_address + disk.BLOCK_SIZE:mem.base_address + disk.BLOCK_SIZE + mem.cache[r2][bucket]]:
+                keyR2, valR2 = tuple
                 for l in range(disk.BLOCK_SIZE):
                     if mem.array[mem.base_address + l] == None:
                         break
-                    key2, val2 = mem.array[mem.base_address + l]
-                    if key1 == key2:
-                        print(key1, val1, val2)
-                        joinResults.append((key1, val1, val2))
+                    keyR1, valR1 = mem.array[mem.base_address + l]
+                    if keyR2 == keyR1:
+                        # print(key1, val1, val2)
+                        joinResults.append((keyR2, valR1, valR2))
 
-    return joinResults
 
-def testHashJoin(joinResults, R1, R2):
-    for key, val1, val2 in joinResults:
-        if (key, val2) not in R1.ref or (key, val1) not in R2.ref:
-            print("Error:", key, val1, val2)
+    return joinResults, disk.io_count - begin_io_count
+
+def verifyHashJoin(joinResults, R1, R2):
+    for key, valR1, valR2 in joinResults:
+        if (key, valR1) not in R1.ref or (key, valR2) not in R2.ref:
+            print("Error:", key, valR1, valR2)
             return False
-    print("Join verified")
+    print(f"Join verified for {R1.name} and {R2.name}. Total tuples: {len(joinResults)}")
     return True
 
 
@@ -209,14 +219,27 @@ mem = VirtualMemory()
 
 relationBC = generateRelationBC(disk)
 relationAB = generateRelationABFromBKeys(disk, relationBC.refKeys)
-# relationAB2 = generateRelationAB(disk)
+relationAB2 = generateRelationAB(disk)
 
-joinResults = hashJoin(mem, disk, relationBC, relationAB)
-# print(joinResults)
-testHashJoin(joinResults, relationBC, relationAB)
+joinResults, io_count = hashJoin(mem, disk, relationBC, relationAB)
+verifyHashJoin(joinResults, relationBC, relationAB)
+print(f"Total disk IO: {io_count}")
+randomBKeys = random.sample(relationAB.refKeys, 20)
+for tuple in joinResults:
+    key, valR1, valR2 = tuple
+    if key in randomBKeys:
+        print(key, valR1, valR2)
+
+joinResults, io_count = hashJoin(mem, disk, relationBC, relationAB2)
+verifyHashJoin(joinResults, relationBC, relationAB2)
+print(f"Disk IO (BC buckets pre-computed): {io_count} \nTotal Disk IO: {io_count + relationBC.metrics[0]}")
+for tuple in joinResults:
+    key, valR1, valR2 = tuple
+    print(key, valR1, valR2)
 
 
-
-
-
-        
+'''
+Doubts:
+1. Disk IO for AB2. BC buckets are already computed in disk for previous BC-AB join. So, should we count them again?
+2. Randomly picking B keys for printing join results, should I pick existing B keys from AB ((20 tuples) or any B is fine? 
+'''
