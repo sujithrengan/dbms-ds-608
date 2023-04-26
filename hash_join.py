@@ -224,12 +224,13 @@ relationAB2 = generateRelationAB(disk)
 joinResults, io_count = hashJoin(mem, disk, relationBC, relationAB)
 verifyHashJoin(joinResults, relationBC, relationAB)
 print(f"Total disk IO: {io_count}")
-randomBKeys = random.sample(relationAB.refKeys, 20)
+randomBKeys = random.sample(list(relationAB.refKeys), 20)
 for tuple in joinResults:
     key, valR1, valR2 = tuple
     if key in randomBKeys:
         print(key, valR1, valR2)
 
+print()
 joinResults, io_count = hashJoin(mem, disk, relationBC, relationAB2)
 verifyHashJoin(joinResults, relationBC, relationAB2)
 print(f"Disk IO (BC buckets pre-computed): {io_count} \nTotal Disk IO: {io_count + relationBC.metrics[0]}")
@@ -237,9 +238,8 @@ for tuple in joinResults:
     key, valR1, valR2 = tuple
     print(key, valR1, valR2)
 
-
 '''
 Doubts:
-1. Disk IO for AB2. BC buckets are already computed in disk for previous BC-AB join. So, should we count them again?
-2. Randomly picking B keys for printing join results, should I pick existing B keys from AB ((20 tuples) or any B is fine? 
+1. Randomly picking 20 B keys for printing join results, should I pick existing B keys from AB ((20 tuples) or any B is fine? 
+2. Disk IO for AB2. BC buckets are already computed in disk for previous BC-AB join. So, should we count them again?
 '''
