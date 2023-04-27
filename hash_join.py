@@ -1,4 +1,5 @@
 import random, string, math
+from tabulate import tabulate
 
 class Relation:
     def __init__(self, name, base_address, size=0, ref = [], refKeys = set()):
@@ -208,9 +209,8 @@ def verifyHashJoin(joinResults, R1, R2):
         if (key, valR1) not in R1.ref or (key, valR2) not in R2.ref:
             print("Error:", key, valR1, valR2)
             return False
-    print(f"Join verified for {R1.name} and {R2.name}. Total tuples: {len(joinResults)}")
+    print(f"\nJoin verified for {R1.name} and {R2.name}. Total tuples: {len(joinResults)}")
     return True
-
 
 random.seed(23)
 disk = VirtualDisk()
@@ -225,18 +225,16 @@ joinResults, io_count = hashJoin(mem, disk, relationBC, relationAB)
 verifyHashJoin(joinResults, relationBC, relationAB)
 print(f"Total disk IO: {io_count}")
 randomBKeys = random.sample(list(relationAB.refKeys), 20)
-for tuple in joinResults:
-    key, valR1, valR2 = tuple
-    if key in randomBKeys:
-        print(key, valR1, valR2)
 
-print()
+results = [t for t in joinResults if t[0] in randomBKeys]
+print("\nBC ⨝ AB")
+print(tabulate(results, headers=["B", "C", "A"], tablefmt="rounded_grid"))
+
 joinResults, io_count = hashJoin(mem, disk, relationBC, relationAB2)
 verifyHashJoin(joinResults, relationBC, relationAB2)
-print(f"Disk IO (BC buckets pre-computed): {io_count} \nTotal Disk IO: {io_count + relationBC.metrics[0]}")
-for tuple in joinResults:
-    key, valR1, valR2 = tuple
-    print(key, valR1, valR2)
+print(f"Disk IO (BC buckets pre-computed): {io_count} \nTotal Disk IO (recounting BC bucket generation): {io_count + relationBC.metrics[0]}")
+print("\nBC ⨝ AB2")
+print(tabulate(joinResults, headers=["B", "C", "A"], tablefmt="rounded_grid"))
 
 '''
 Doubts:
