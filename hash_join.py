@@ -228,12 +228,14 @@ randomBKeys = random.sample(list(relationAB.refKeys), 20)
 
 results = [t for t in joinResults if t[0] in randomBKeys]
 print("\nBC ⨝ AB")
+# print(tabulate(results, headers=["B", "C", "A"]))
 print(tabulate(results, headers=["B", "C", "A"], tablefmt="rounded_grid"))
 
 joinResults, io_count = hashJoin(mem, disk, relationBC, relationAB2)
 verifyHashJoin(joinResults, relationBC, relationAB2)
 print(f"Disk IO (BC buckets pre-computed): {io_count} \nTotal Disk IO (recounting BC bucket generation): {io_count + relationBC.metrics[0]}")
 print("\nBC ⨝ AB2")
+# print(tabulate(joinResults, headers=["B", "C", "A"]))
 print(tabulate(joinResults, headers=["B", "C", "A"], tablefmt="rounded_grid"))
 
 '''
